@@ -1,0 +1,16 @@
+[package]
+name = "vm"
+version = "0.1.0"
+authors = ["Yuichi Fujita <cat@y8m.org>"]
+
+[[bin]]
+name = "vm"
+path = "src/main/vm.rs"
+doc = false
+
+[dependencies]
+clap = "2.32.0"
+failure = "0.1.2"
+serde = "1.0.71"
+serde_derive = "1.0.71"
+toml = "0.4.6"
