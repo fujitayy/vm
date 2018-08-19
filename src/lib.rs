@@ -89,6 +89,14 @@ impl Config {
         }
     }
 
+    pub fn vagrant_path(&self) -> &Path {
+        self.vagrant_path.as_path()
+    }
+
+    pub fn vm_list(&self) -> &BTreeMap<String, Info> {
+        &self.vm_list
+    }
+
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         BufWriter::new(File::create(path)?).write_all(toml::to_string_pretty(self)?.as_bytes())?;
         Ok(())
@@ -146,8 +154,7 @@ pub struct Vm<V: RunVagrant> {
 }
 
 impl<V: RunVagrant> Vm<V> {
-    pub fn new<P: AsRef<Path>>(path: P, vagrant: V) -> Result<Vm<V>, Error> {
-        let config = Config::from_file(path.as_ref())?;
+    pub fn new<P: AsRef<Path>>(path: P, config: Config, vagrant: V) -> Result<Vm<V>, Error> {
         Ok(Vm {
             config_file_path: path.as_ref().to_path_buf(),
             config,
@@ -197,7 +204,7 @@ impl<V: RunVagrant> Vm<V> {
         Ok(())
     }
 
-    fn vagrant<S: AsRef<OsStr>, T: AsRef<OsStr>>(
+    pub fn vagrant<S: AsRef<OsStr>, T: AsRef<OsStr>>(
         &self,
         command: S,
         options: &[T],
@@ -206,7 +213,7 @@ impl<V: RunVagrant> Vm<V> {
     }
 
     /// Pass vagrant command options.
-    fn vagrant_raw<S: AsRef<OsStr>>(&self, options: &[S]) -> Result<ExitStatus, Error> {
+    pub fn vagrant_raw<S: AsRef<OsStr>>(&self, options: &[S]) -> Result<ExitStatus, Error> {
         Ok(self.vagrant.raw(options)?)
     }
 

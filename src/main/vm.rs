@@ -8,36 +8,40 @@ extern crate vm;
 use directories::ProjectDirs;
 use failure::Error;
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::PathBuf;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() -> Result<(), Error> {
-    match Args::new(args_parser(), std::env::args()) {
+    let status = match Args::new(args_parser(), std::env::args()) {
         Ok(args) => run(&args)?,
-        Err(err) => eprintln!("{}", err),
-    }
-    Ok(())
+        Err(err) => {
+            eprintln!("{}", err);
+            2
+        },
+    };
+
+    std::process::exit(status);
 }
 
-fn run(args: &Args) -> Result<(), Error> {
+fn run(args: &Args) -> Result<i32, Error> {
     let config_file_path = config_file_path();
-
-    let vagrant = vm::Vagrant::new(config_file_path.as_path());
-    let mut vm = vm::Vm::new(config_file_path.as_path(), vagrant)?;
-
     std::fs::create_dir_all(config_file_path.parent().unwrap())?;
+
+    let config = vm::Config::from_file(&config_file_path)?;
+    let vagrant = vm::Vagrant::new(config.vagrant_path());
+    let mut vm = vm::Vm::new(&config_file_path, config, vagrant)?;
+
     if !config_file_path.exists() {
         vm.config().save_to_file(config_file_path.as_path())?;
     }
 
-    run_vagrant(args, &mut vm)?;
-
-    Ok(())
+    Ok(run_vagrant(args, &mut vm)?)
 }
 
-fn run_vagrant<T: vm::RunVagrant>(args: &Args, vm: &mut vm::Vm<T>) -> Result<(), Error> {
-    match args.subcommand {
+fn run_vagrant<T: vm::RunVagrant>(args: &Args, vm: &mut vm::Vm<T>) -> Result<i32, Error> {
+    match &args.subcommand {
         SubCommand::List => vm
             .list()
             .iter()
@@ -46,35 +50,62 @@ fn run_vagrant<T: vm::RunVagrant>(args: &Args, vm: &mut vm::Vm<T>) -> Result<(),
             name: name,
             path: path,
         } => {
-            vm.add(name, path)?;
+            vm.add(name, path);
             vm.config().save_to_file(vm.config_file_path())?;
         }
         SubCommand::Remove {
             name: name,
             force: force,
         } => {
-            if let Some(info) = vm.get_info(name) {
-                print!(
-                    "Delete this entry { name: {}, path: {} } (y/N)",
-                    info.name(),
-                    info.path()
-                );
-                let does_remove = if let Some(result) = std::io::stdin().chars().take(1).next() {
-                    result?.to_lowercase() == 'y'
+            let m =
+                if let Some(info) = vm.get_info(name) {
+                    print!(
+                        "Delete this entry {{ name: {}, path: {} }} (y/N)",
+                        info.name(),
+                        info.path().to_string_lossy()
+                    );
+
+                    if let Some(result) = std::io::stdin().bytes().take(1).next() {
+                        let byte = result?;
+                        Some((info.clone(), byte.is_ascii_alphabetic() && byte.to_ascii_lowercase() == b'y'))
+                    } else {
+                        Some((info.clone(), false))
+                    }
                 } else {
-                    false
+                    None
                 };
+
+            if let Some((info, does_remove)) = m {
                 if does_remove {
-                    vm.remove
+                    vm.remove(info.name());
+                    vm.config().save_to_file(vm.config_file_path())?;
                 }
             }
         }
         SubCommand::BackupConfigFile => {
-            let t = chrono::Local::now();
+            let backup_name = format!("config.toml.{}", chrono::Local::now().format("%Y%m%h-%H%M%S"));
+            vm.backup_config_file(PathBuf::from(backup_name))?;
+        }
+        SubCommand::FindVagrantfiles {
+            base_path: base_path
+        } => {
+            vm::find_vagrantfiles(base_path)?;
+        }
+        SubCommand::Raw {
+            vm_name: vm_name,
+            options: options,
+        } => {
+            return if let Some(info) = vm.get_info(vm_name) {
+                std::env::set_current_dir(info.path())?;
+                Ok(vm.vagrant_raw(options.as_slice())?.code().unwrap_or(0))
+            } else {
+                eprintln!("{} is not found in vm_list", vm_name);
+                Ok(1)
+            };
         }
     }
 
-    unimplemented!()
+    Ok(0)
 }
 
 fn config_file_path() -> PathBuf {
@@ -232,5 +263,3 @@ fn args_parser<'a, 'b>() -> clap::App<'a, 'b> {
                 ),
         )
 }
-
-fn read_config() -> Result<vm::Config, Error> {}
